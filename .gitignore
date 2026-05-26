@@ -11,3 +11,13 @@ wheels/
 
 # Data
 /data/
+
+# OS-specific
+.DS_Store
+
+# Local only
+docs/
+original_tsam_examples/
+
+# Already in the pyproject.toml
+.python-version
