@@ -1,6 +1,5 @@
 # Python-generated files
-__pycache__/
-*.py[oc]
+__pycache__/ *.py[oc]
 build/
 dist/
 wheels/
@@ -18,3 +17,6 @@ original_tsam_examples/
 
 # Already in the pyproject.toml
 .python-version
+
+# TSAM repo clone
+tsam/
