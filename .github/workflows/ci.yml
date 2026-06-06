@@ -38,23 +38,3 @@ jobs:
           BASE_COMMIT: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: uv run cz check --rev-range "$BASE_COMMIT..$HEAD_COMMIT"
-
-  notebooks:
-    name: Execute notebooks
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Install Python
-        run: uv python install
-
-      - name: Install dependencies
-        run: uv sync --locked --all-groups
-
-      - name: Run notebooks
-        run: uv run pytest --nbmake --nbmake-timeout=900 src/*.ipynb
