@@ -35,7 +35,13 @@ uv sync
 Start JupyterLab:
 
 ```bash
-uv run --with jupyterlab jupyter lab
+uv run jupyter lab
+```
+
+Or start Jupyter Notebook:
+
+```bash
+uv run jupyter notebook
 ```
 
 Then open the notebooks from `src/`.
