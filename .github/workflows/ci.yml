@@ -38,3 +38,38 @@ jobs:
           BASE_COMMIT: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: uv run cz check --rev-range "$BASE_COMMIT..$HEAD_COMMIT"
+
+  quality:
+    name: Quality checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Lint
+        run: uv run ruff check src/tsam_workflows tests src/approach_1_ALL.ipynb
+
+      - name: Type check
+        run: uv run mypy src/tsam_workflows
+
+      - name: Test
+        run: uv run pytest
+
+      - name: Execute grouped notebook
+        run: uv run pytest --nbmake src/approach_1_ALL.ipynb
+
+      - name: CLI help
+        run: uv run tsam-workflows grouped --help
+
+      - name: Build package
+        run: uv build
