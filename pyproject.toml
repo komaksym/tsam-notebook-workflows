@@ -44,5 +44,11 @@ major_version_zero = true
 pythonpath = ["src"]
 testpaths = ["tests"]
 
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/tsam_workflows"]
