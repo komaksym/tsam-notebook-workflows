@@ -2079,8 +2079,10 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
-dev = [
+commit = [
     { name = "commitizen" },
+]
+dev = [
     { name = "mypy" },
     { name = "nbmake" },
     { name = "pre-commit" },
@@ -2101,8 +2103,8 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+commit = [{ name = "commitizen", specifier = ">=4.16.2" }]
 dev = [
-    { name = "commitizen", specifier = ">=4.16.2" },
     { name = "mypy", specifier = ">=1.11.2" },
     { name = "nbmake", specifier = ">=1.5.5" },
     { name = "pre-commit", specifier = ">=4.6.0" },

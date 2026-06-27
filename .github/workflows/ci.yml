@@ -23,21 +23,21 @@ jobs:
       - name: Install Python
         run: uv python install
 
-      - name: Install dependencies
-        run: uv sync --locked --all-groups
+      - name: Install Commitizen
+        run: uv sync --locked --only-group commit
 
       - name: Check PR title
         if: github.event_name == 'pull_request'
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
-        run: uv run cz check --message "$PR_TITLE"
+        run: uv run --no-sync cz check --message "$PR_TITLE"
 
       - name: Check commit messages
         if: github.event_name == 'pull_request' || github.event.before != '0000000000000000000000000000000000000000'
         env:
           BASE_COMMIT: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: uv run cz check --rev-range "$BASE_COMMIT..$HEAD_COMMIT"
+        run: uv run --no-sync cz check --rev-range "$BASE_COMMIT..$HEAD_COMMIT"
 
   quality:
     name: Quality checks
@@ -54,7 +54,7 @@ jobs:
         run: uv python install
 
       - name: Install dependencies
-        run: uv sync --locked --all-groups
+        run: uv sync --locked
 
       - name: Lint
         run: uv run ruff check src/tsam_workflows tests src/approach_1_ALL.ipynb

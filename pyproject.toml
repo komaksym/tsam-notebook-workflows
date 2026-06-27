@@ -23,8 +23,10 @@ dependencies = [
 tsam-workflows = "tsam_workflows.cli:main"
 
 [dependency-groups]
-dev = [
+commit = [
     "commitizen>=4.16.2",
+]
+dev = [
     "mypy>=1.11.2",
     "nbmake>=1.5.5",
     "pre-commit>=4.6.0",
