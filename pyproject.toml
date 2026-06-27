@@ -1,7 +1,11 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "tsam-notebook-workflows"
 version = "0.1.0"
-description = "Add your description here"
+description = "Reusable TSAM notebook workflows and CLI"
 readme = "README.md"
 requires-python = ">=3.13.0"
 dependencies = [
@@ -30,3 +34,5 @@ tag_format = "v$version"
 version_scheme = "pep440"
 update_changelog_on_bump = true
 major_version_zero = true
+[tool.hatch.build.targets.wheel]
+packages = ["src/tsam_workflows"]
