@@ -29,6 +29,7 @@ dev = [
     "nbmake>=1.5.5",
     "pre-commit>=4.6.0",
     "pytest>=9.0.3",
+    "ruff>=0.13.2",
 ]
 
 [tool.commitizen]
