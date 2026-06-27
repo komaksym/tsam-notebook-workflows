@@ -19,6 +19,9 @@ dependencies = [
     "tsam>=3.3.0",
 ]
 
+[project.scripts]
+tsam-workflows = "tsam_workflows.cli:main"
+
 [dependency-groups]
 dev = [
     "commitizen>=4.16.2",
