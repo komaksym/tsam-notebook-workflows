@@ -11,10 +11,13 @@ from typing import Any
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.colors import hex_to_rgb, unlabel_rgb
+from plotly.subplots import make_subplots
 
 from tsam_workflows.config import ChartSelection
 
 PLOTLY_TEMPLATE = "ggplot2"
+PLOTLY_SUMMARY_TEMPLATE = "plotly"
 MONTH_ORDER: list[str] = [
     "January",
     "February",
@@ -30,6 +33,17 @@ MONTH_ORDER: list[str] = [
     "December",
 ]
 MONTH_NAME_BY_NUMBER = dict(zip(range(1, 13), MONTH_ORDER, strict=True))
+CALENDAR_ROWS = 4
+CALENDAR_COLS = 3
+WEEKDAY_NUMBERS = list(range(7))
+WEEKEND_WEEKDAY_NUMBERS = {5, 6}
+WEEKDAY_LABELS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
+REPRESENTATIVE_PALETTE = (
+    px.colors.qualitative.Plotly
+    + px.colors.qualitative.Set3
+    + px.colors.qualitative.Dark24
+)
+REPRESENTATIVE_DAY_TYPE_SORT_ORDER = {"working": 0, "non-working": 1}
 
 
 class ChartExportError(ValueError):
@@ -99,31 +113,244 @@ def style_tsam_figure(fig: go.Figure, title: str) -> go.Figure:
     return fig
 
 
+def _prepare_calendar_assignments(assignments: pd.DataFrame) -> pd.DataFrame:
+    """Add numeric color IDs and calendar coordinates to day assignments."""
+    calendar = assignments.loc[:, ["representative_id"]].copy()
+    calendar.index = pd.DatetimeIndex(calendar.index).normalize()
+    representative_ids = calendar["representative_id"].drop_duplicates()
+    color_by_representative = {
+        representative_id: color_id
+        for color_id, representative_id in enumerate(representative_ids)
+    }
+    calendar["representative_color_id"] = calendar["representative_id"].map(
+        color_by_representative
+    )
+    calendar["day"] = calendar.index.day
+    calendar["weekday_num"] = calendar.index.weekday
+    calendar["week_row"] = 0
+    for month in range(1, 13):
+        month_mask = calendar.index.month == month
+        first_weekday = calendar.loc[month_mask].index.min().weekday()
+        calendar.loc[month_mask, "week_row"] = (
+            calendar.loc[month_mask, "day"] + first_weekday - 1
+        ) // 7
+    return calendar
+
+
+def _build_representative_colorscale(
+    color_ids: list[int],
+) -> tuple[list[tuple[float, str]], float, float]:
+    """Build a discrete Plotly colorscale for representative IDs."""
+    zmin = min(color_ids) - 0.5
+    zmax = max(color_ids) + 0.5
+    colorscale: list[tuple[float, str]] = []
+    for index, color_id in enumerate(color_ids):
+        color = REPRESENTATIVE_PALETTE[index % len(REPRESENTATIVE_PALETTE)]
+        colorscale.append(((color_id - 0.5 - zmin) / (zmax - zmin), color))
+        colorscale.append(((color_id + 0.5 - zmin) / (zmax - zmin), color))
+    return colorscale, zmin, zmax
+
+
+def _contrast_text_color(background: str) -> str:
+    """Return the higher-contrast text color for a Plotly palette color."""
+    rgb = hex_to_rgb(background) if background.startswith("#") else unlabel_rgb(background)
+    channels = [channel / 255 for channel in rgb]
+    linear_channels = [
+        channel / 12.92
+        if channel <= 0.04045
+        else ((channel + 0.055) / 1.055) ** 2.4
+        for channel in channels
+    ]
+    luminance = sum(
+        weight * channel
+        for weight, channel in zip(
+            (0.2126, 0.7152, 0.0722),
+            linear_channels,
+            strict=True,
+        )
+    )
+    black_contrast = (luminance + 0.05) / 0.05
+    white_contrast = 1.05 / (luminance + 0.05)
+    return "#000000" if black_contrast >= white_contrast else "#ffffff"
+
+
+def _build_calendar_month_trace(
+    month_data: pd.DataFrame,
+    colorscale: list[tuple[float, str]],
+    zmin: float,
+    zmax: float,
+) -> go.Heatmap:
+    """Build one calendar-month heatmap colored by representative ID."""
+    color_grid = month_data.pivot(
+        index="week_row",
+        columns="weekday_num",
+        values="representative_color_id",
+    ).reindex(columns=WEEKDAY_NUMBERS)
+    day_grid = month_data.pivot(
+        index="week_row",
+        columns="weekday_num",
+        values="day",
+    ).reindex(columns=WEEKDAY_NUMBERS)
+    day_text = day_grid.map(lambda value: "" if pd.isna(value) else str(int(value)))
+    representative_grid = month_data.pivot(
+        index="week_row",
+        columns="weekday_num",
+        values="representative_id",
+    ).reindex(columns=WEEKDAY_NUMBERS)
+    hover_text = representative_grid.copy()
+    for weekday_num, weekday_label in enumerate(WEEKDAY_LABELS):
+        hover_text[weekday_num] = representative_grid[weekday_num].map(
+            lambda representative_id: (
+                ""
+                if pd.isna(representative_id)
+                else f"{weekday_label}<br>Representative: {representative_id}"
+            )
+        )
+
+    return go.Heatmap(
+        z=color_grid.to_numpy(),
+        x=WEEKDAY_NUMBERS,
+        y=color_grid.index,
+        text=day_text.to_numpy(),
+        customdata=hover_text.to_numpy(),
+        colorscale=colorscale,
+        zmin=zmin,
+        zmax=zmax,
+        hovertemplate="Day %{text}<br>%{customdata}<extra></extra>",
+        xgap=2,
+        ygap=2,
+        showscale=False,
+    )
+
+
+def _build_calendar_day_labels(month_data: pd.DataFrame) -> go.Scatter:
+    """Overlay calendar day numbers with text colors matched to each cell."""
+    colors = [
+        _contrast_text_color(
+            REPRESENTATIVE_PALETTE[
+                int(color_id) % len(REPRESENTATIVE_PALETTE)
+            ]
+        )
+        for color_id in month_data["representative_color_id"]
+    ]
+    return go.Scatter(
+        x=month_data["weekday_num"],
+        y=month_data["week_row"],
+        mode="text",
+        text=month_data["day"].astype(str),
+        textfont={"size": 13, "color": colors},
+        hoverinfo="skip",
+        showlegend=False,
+    )
+
+
+def _add_weekend_borders(
+    fig: go.Figure,
+    monthly_assignments: list[pd.DataFrame],
+    subplot_positions: list[tuple[int, int]],
+) -> None:
+    """Outline weekend cells without replacing representative colors."""
+    for month_data, (row, col) in zip(
+        monthly_assignments,
+        subplot_positions,
+        strict=True,
+    ):
+        weekend_days = month_data[
+            month_data["weekday_num"].isin(WEEKEND_WEEKDAY_NUMBERS)
+        ]
+        for _, day in weekend_days.iterrows():
+            fig.add_shape(
+                type="rect",
+                x0=day["weekday_num"] - 0.5,
+                x1=day["weekday_num"] + 0.5,
+                y0=day["week_row"] - 0.5,
+                y1=day["week_row"] + 0.5,
+                line={"color": "rgba(35, 35, 35, 0.75)", "width": 2},
+                fillcolor="rgba(0, 0, 0, 0)",
+                layer="above",
+                row=row,
+                col=col,
+            )
+
+
 def build_assignment_calendar_figure(result: Any) -> go.Figure:
-    """Build an assignment overview mapping original days to representatives."""
-    assignments = result.day_assignments_df.copy()
-    assignments["date"] = assignments.index
-    fig = px.scatter(
-        assignments,
-        x="date",
-        y="representative_id",
-        color="group_id",
-        hover_data=["cluster_id", "cluster_weight"],
-        labels={
-            "date": "Original day",
-            "representative_id": "Representative day",
-            "group_id": "Group",
+    """Build a 12-month calendar colored by assigned representative day."""
+    calendar = _prepare_calendar_assignments(result.day_assignments_df)
+    color_ids = sorted(calendar["representative_color_id"].unique().astype(int))
+    colorscale, zmin, zmax = _build_representative_colorscale(color_ids)
+    monthly_assignments = [
+        calendar[calendar.index.month == month] for month in range(1, 13)
+    ]
+    heatmaps = [
+        _build_calendar_month_trace(month, colorscale, zmin, zmax)
+        for month in monthly_assignments
+    ]
+    day_labels = [
+        _build_calendar_day_labels(month) for month in monthly_assignments
+    ]
+    subplot_positions = [
+        (row, col)
+        for row in range(1, CALENDAR_ROWS + 1)
+        for col in range(1, CALENDAR_COLS + 1)
+    ]
+    fig = make_subplots(
+        rows=CALENDAR_ROWS,
+        cols=CALENDAR_COLS,
+        subplot_titles=MONTH_ORDER,
+    )
+    for heatmap, labels, (row, col) in zip(
+        heatmaps,
+        day_labels,
+        subplot_positions,
+        strict=True,
+    ):
+        fig.add_trace(heatmap, row=row, col=col)
+        fig.add_trace(labels, row=row, col=col)
+    _add_weekend_borders(fig, monthly_assignments, subplot_positions)
+    year = int(calendar.index.year.min())
+    fig.update_layout(
+        title={
+            "text": f"{year} representative-day assignment calendar",
+            "x": 0.5,
+            "font_size": 20,
+            "y": 0.99,
         },
         template=PLOTLY_TEMPLATE,
-    )
-    year = int(pd.DatetimeIndex(assignments["date"]).year.min())
-    fig.update_layout(
-        title={"text": f"{year} representative-day assignment calendar", "x": 0.5},
         autosize=True,
-        height=700,
-        margin={"l": 40, "r": 30, "t": 80, "b": 70},
+        height=900,
+        plot_bgcolor="white",
+        margin={"l": 20, "r": 20, "t": 120, "b": 20},
+    )
+    fig.update_annotations(yshift=25)
+    fig.update_xaxes(
+        side="top",
+        tickmode="array",
+        tickvals=WEEKDAY_NUMBERS,
+        ticktext=WEEKDAY_LABELS,
+        showticklabels=True,
+        ticks="",
+        showline=False,
+        showgrid=False,
+        zeroline=False,
+    )
+    fig.update_yaxes(
+        ticks="",
+        showline=False,
+        autorange="reversed",
+        showgrid=False,
+        zeroline=False,
+        showticklabels=False,
     )
     return fig
+
+
+def _sort_representative_group(representative_group: str) -> tuple[int, int]:
+    """Sort representative rows by day type and numeric cluster ID."""
+    day_type, cluster_label = representative_group.rsplit("_c", maxsplit=1)
+    return (
+        REPRESENTATIVE_DAY_TYPE_SORT_ORDER.get(day_type, 99),
+        int(cluster_label),
+    )
 
 
 def build_representative_weights_figure(result: Any) -> go.Figure:
@@ -142,11 +369,41 @@ def build_representative_weights_figure(result: Any) -> go.Figure:
 
     # The percentage denominator is the original days in the same month/day-type
     # group, not the whole month. That keeps working/non-working groups separate.
+    representative_order = sorted(
+        summary["representative_group"].unique(),
+        key=_sort_representative_group,
+    )
     matrix = summary.pivot(
         index="representative_group",
         columns="month_name",
         values="group_share_pct",
-    ).reindex(columns=MONTH_ORDER)
+    ).reindex(index=representative_order, columns=MONTH_ORDER)
+    assigned_days = summary.pivot(
+        index="representative_group",
+        columns="month_name",
+        values="cluster_weight",
+    ).reindex(index=representative_order, columns=MONTH_ORDER)
+    group_days = summary.pivot(
+        index="representative_group",
+        columns="month_name",
+        values="group_days",
+    ).reindex(index=representative_order, columns=MONTH_ORDER)
+    text = matrix.map(lambda value: "" if pd.isna(value) else f"{value:.1f}%")
+    hover_data = [
+        [
+            [assigned_count, group_count]
+            for assigned_count, group_count in zip(
+                assigned_row,
+                group_row,
+                strict=True,
+            )
+        ]
+        for assigned_row, group_row in zip(
+            assigned_days.to_numpy(),
+            group_days.to_numpy(),
+            strict=True,
+        )
+    ]
     fig = px.imshow(
         matrix,
         aspect="auto",
@@ -155,7 +412,20 @@ def build_representative_weights_figure(result: Any) -> go.Figure:
             "y": "Representative group",
             "color": "% of month/day-type group",
         },
-        template=PLOTLY_TEMPLATE,
+        template=PLOTLY_SUMMARY_TEMPLATE,
+    )
+    fig.update_traces(
+        customdata=hover_data,
+        text=text.to_numpy(),
+        texttemplate="%{text}" if matrix.size <= 240 else "",
+        hovertemplate=(
+            "Month: %{x}<br>"
+            "Representative group: %{y}<br>"
+            "Share of month/day-type group: %{z:.1f}%<br>"
+            "Days assigned: %{customdata[0]:.0f}<br>"
+            "Days in month/day-type group: %{customdata[1]:.0f}"
+            "<extra></extra>"
+        ),
     )
     fig.update_layout(
         title={
@@ -166,6 +436,11 @@ def build_representative_weights_figure(result: Any) -> go.Figure:
         height=max(500, 120 + 42 * max(1, len(matrix))),
         margin={"l": 20, "r": 20, "t": 80, "b": 40},
         coloraxis_showscale=False,
+    )
+    fig.update_xaxes(title_font_size=18, tickfont={"size": 14})
+    fig.update_yaxes(
+        title_font_size=18,
+        tickfont={"size": 14 if len(matrix) <= 10 else 11},
     )
     return fig
 
@@ -194,7 +469,7 @@ def build_group_accuracy_figure(result: Any) -> go.Figure:
             "group_id": "Group",
             "day_type": "Day type",
         },
-        template=PLOTLY_TEMPLATE,
+        template=PLOTLY_SUMMARY_TEMPLATE,
     )
     fig.update_traces(
         hovertemplate=(
