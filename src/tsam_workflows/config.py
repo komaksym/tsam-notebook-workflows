@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -26,6 +26,55 @@ SUPPORTED_CLUSTER_METHODS: tuple[ClusterMethod, ...] = (
 
 DEFAULT_NON_WORKING_WEEKDAYS: frozenset[str] = frozenset({"Saturday", "Sunday"})
 
+COUNTRY_NAMES: dict[str, str] = {
+    "AL": "Albania",
+    "AT": "Austria",
+    "BA": "Bosnia and Herzegovina",
+    "BE": "Belgium",
+    "BG": "Bulgaria",
+    "CH": "Switzerland",
+    "CZ": "Czechia",
+    "DE": "Germany",
+    "DK": "Denmark",
+    "EE": "Estonia",
+    "ES": "Spain",
+    "FI": "Finland",
+    "FR": "France",
+    "GR": "Greece",
+    "HR": "Croatia",
+    "HU": "Hungary",
+    "IE": "Ireland",
+    "IT": "Italy",
+    "LT": "Lithuania",
+    "LU": "Luxembourg",
+    "LV": "Latvia",
+    "MD": "Moldova",
+    "ME": "Montenegro",
+    "MK": "North Macedonia",
+    "NL": "Netherlands",
+    "NO": "Norway",
+    "PL": "Poland",
+    "PT": "Portugal",
+    "RO": "Romania",
+    "RS": "Serbia",
+    "SE": "Sweden",
+    "SI": "Slovenia",
+    "SK": "Slovakia",
+    "UA": "Ukraine",
+    "UK": "United Kingdom",
+    "XK": "Kosovo",
+}
+
+
+def country_options(codes: list[str]) -> list[tuple[str, str]]:
+    """Return the original notebook's sorted ``Full name (CODE)`` options."""
+    missing_country_names = set(codes).difference(COUNTRY_NAMES)
+    if missing_country_names:
+        raise ValueError(
+            f"Missing country names for: {sorted(missing_country_names)}"
+        )
+    return [(f"{COUNTRY_NAMES[code]} ({code})", code) for code in sorted(codes)]
+
 
 @dataclass(frozen=True)
 class DatasetSpec:
@@ -39,15 +88,6 @@ class DatasetSpec:
 
 
 @dataclass(frozen=True)
-class ChartSelection:
-    """Selectors controlling optional offline chart expansion."""
-
-    groups: tuple[str, ...] | None = None
-    countries: tuple[str, ...] | None = None
-    feature_groups: tuple[str, ...] | None = None
-
-
-@dataclass(frozen=True)
 class GroupedWorkflowConfig:
     """Runtime options for the grouped TSAM workflow."""
 
@@ -58,7 +98,6 @@ class GroupedWorkflowConfig:
     working_clusters: int = 5
     non_working_clusters: int = 2
     cluster_method: ClusterMethod = "hierarchical"
-    chart_selection: ChartSelection = field(default_factory=ChartSelection)
     overwrite: bool = False
     hourly_frequency: str = "h"
     snapshot_column: str = "snapshot"

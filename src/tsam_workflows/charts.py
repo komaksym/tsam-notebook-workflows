@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,8 +14,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.colors import hex_to_rgb, unlabel_rgb
 from plotly.subplots import make_subplots
+from plotly.utils import PlotlyJSONEncoder
 
-from tsam_workflows.config import ChartSelection
+from tsam_workflows.drilldown_dashboard import write_drilldown_dashboard
 
 PLOTLY_TEMPLATE = "ggplot2"
 PLOTLY_SUMMARY_TEMPLATE = "plotly"
@@ -79,23 +81,6 @@ def _available_groups(result: Any) -> list[str]:
     if group_ids is not None:
         return list(group_ids)
     return list(result.tsam_results_by_group)
-
-
-def _expand_selector(
-    requested: tuple[str, ...] | None,
-    available: list[str],
-    label: str,
-) -> list[str]:
-    """Expand a CLI selector, validating explicit values and preserving order."""
-    if requested is None:
-        return []
-    if len(requested) == 1 and requested[0].lower() == "all":
-        return available
-
-    unknown = [value for value in requested if value not in available]
-    if unknown:
-        raise ChartExportError(f"Unknown {label}: {', '.join(unknown)}")
-    return list(dict.fromkeys(requested))
 
 
 def style_tsam_figure(fig: go.Figure, title: str) -> go.Figure:
@@ -500,80 +485,83 @@ def _write_figure(fig: go.Figure, path: Path) -> Path:
     return path
 
 
-def plan_group_jobs(result: Any, selection: ChartSelection) -> list[str]:
+def plan_group_jobs(result: Any) -> list[str]:
     """Return group IDs that need group-only TSAM charts."""
-    return _expand_selector(selection.groups, _available_groups(result), "chart groups")
+    return _available_groups(result)
 
 
 def plan_drilldown_jobs(
     result: Any,
-    selection: ChartSelection,
 ) -> tuple[list[DrilldownJob], list[dict[str, str]]]:
-    """Resolve feature drilldown selectors into export jobs and skipped records.
-
-    Group-only selectors are handled by :func:`plan_group_jobs`. Feature
-    drilldowns require all three selector dimensions because a feature chart is
-    only meaningful after choosing a group, country, and feature group.
-    """
-    selectors = [selection.groups, selection.countries, selection.feature_groups]
-    if all(selector is None for selector in selectors):
-        return [], []
-    if selection.countries is None and selection.feature_groups is None:
-        return [], []
-    if any(selector is None for selector in selectors):
-        raise ChartExportError(
-            "Feature drilldowns require --chart-groups, --chart-countries, "
-            "and --chart-feature-groups together"
-        )
-
-    assert selection.groups is not None
-    assert selection.countries is not None
-    assert selection.feature_groups is not None
-
-    groups = _expand_selector(selection.groups, _available_groups(result), "chart groups")
-    available_countries = sorted(result.feature_columns_by_country_and_group)
-    countries = _expand_selector(
-        tuple(country.upper() for country in selection.countries),
-        available_countries,
-        "chart countries",
-    )
-    all_feature_groups = sorted(
-        {
-            feature_group
-            for country_lookup in result.feature_columns_by_country_and_group.values()
-            for feature_group in country_lookup
-        }
-    )
-    feature_groups = _expand_selector(
-        selection.feature_groups,
-        all_feature_groups,
-        "chart feature groups",
-    )
-
+    """Return every valid group/country/feature chart combination."""
     jobs: list[DrilldownJob] = []
-    skipped: list[dict[str, str]] = []
-    for group in groups:
-        for country in countries:
-            country_lookup = result.feature_columns_by_country_and_group[country]
-            for feature_group in feature_groups:
-                columns = country_lookup.get(feature_group)
-                if columns:
-                    jobs.append(DrilldownJob(group, country, feature_group, columns))
-                else:
-                    # Coverage is asymmetric across datasets. Missing country/
-                    # feature pairs are recorded instead of hiding the decision.
-                    skipped.append(
-                        {
-                            "group": group,
-                            "country": country,
-                            "feature_group": feature_group,
-                            "reason": "feature group unavailable for country",
-                        }
-                    )
+    feature_lookup = result.feature_columns_by_country_and_group
+    for group in _available_groups(result):
+        for country in sorted(feature_lookup):
+            for feature_group, columns in sorted(feature_lookup[country].items()):
+                jobs.append(DrilldownJob(group, country, feature_group, columns))
+    return jobs, []
 
-    if not jobs and (selection.countries is not None or selection.feature_groups is not None):
-        raise ChartExportError("No requested drilldown is valid")
-    return jobs, skipped
+
+def _write_group_diagnostics(result: Any, output_dir: Path) -> Path:
+    """Write one offline dashboard for all group-level TSAM diagnostics."""
+    figures: dict[str, dict[str, Any]] = {}
+    groups = plan_group_jobs(result)
+    for group in groups:
+        plotter = result.tsam_results_by_group[group].plot
+        weights = style_tsam_figure(
+            plotter.cluster_weights(title=""),
+            f"Cluster weights: {group}",
+        )
+        accuracy = style_tsam_figure(
+            plotter.accuracy(title=""),
+            f"Cluster accuracy: {group}",
+        )
+        figures[group] = {
+            "cluster_weights": weights.to_plotly_json(),
+            "cluster_accuracy": accuracy.to_plotly_json(),
+        }
+
+    options = "\n".join(
+        f'<option value="{html.escape(group, quote=True)}">'
+        f"{html.escape(group)}</option>"
+        for group in groups
+    )
+    payload = json.dumps(
+        figures,
+        cls=PlotlyJSONEncoder,
+        separators=(",", ":"),
+    ).replace("</", "<\\/")
+    path = output_dir / "group_diagnostics.html"
+    path.write_text(
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>TSAM group diagnostics</title>"
+        "<style>body{font-family:system-ui,sans-serif;margin:24px;}"
+        "label{font-weight:600;margin-right:8px;}select{font:inherit;padding:6px;}"
+        ".chart{min-height:720px;}</style></head><body>"
+        "<h1>TSAM group diagnostics</h1>"
+        '<label for="group-select">Group</label>'
+        f'<select id="group-select">{options}</select>'
+        '<div id="cluster-weights" class="chart"></div>'
+        '<div id="cluster-accuracy" class="chart"></div>'
+        '<script src="plotly.min.js"></script><script>'
+        f"const figures={payload};"
+        "const groupSelect=document.getElementById('group-select');"
+        "const config={responsive:true};"
+        "function renderGroup(group){"
+        "const selected=figures[group];"
+        "Plotly.react('cluster-weights',selected.cluster_weights.data,"
+        "selected.cluster_weights.layout,config);"
+        "Plotly.react('cluster-accuracy',selected.cluster_accuracy.data,"
+        "selected.cluster_accuracy.layout,config);"
+        "}"
+        "groupSelect.addEventListener('change',event=>renderGroup(event.target.value));"
+        "renderGroup(groupSelect.value);"
+        "</script></body></html>",
+        encoding="utf-8",
+    )
+    return path
 
 
 def _write_index(output_dir: Path, files: list[Path]) -> Path:
@@ -599,102 +587,34 @@ def _write_index(output_dir: Path, files: list[Path]) -> Path:
 def export_charts(
     result: Any,
     output_dir: Path,
-    selection: ChartSelection,
 ) -> ChartExportResult:
-    """Export summary and selected drilldown charts as offline Plotly HTML.
-
-    Summary charts are always written. `selection.groups` adds group-only TSAM
-    charts. Full feature drilldowns are exported only for valid group/country/
-    feature-group combinations.
-    """
+    """Export every summary and valid drilldown chart as offline Plotly HTML."""
     output_dir.mkdir(parents=True, exist_ok=True)
+    assets_dir = output_dir / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
     files = [
         _write_figure(
             build_assignment_calendar_figure(result),
-            output_dir / "assignment_calendar.html",
+            assets_dir / "assignment_calendar.html",
         ),
         _write_figure(
             build_representative_weights_figure(result),
-            output_dir / "representative_weights.html",
+            assets_dir / "representative_weights.html",
         ),
         _write_figure(
             build_group_accuracy_figure(result),
-            output_dir / "group_accuracy.html",
+            assets_dir / "group_accuracy.html",
         ),
     ]
 
-    # Group-only charts do not need country/feature selectors because they use
-    # every feature available in the selected group's TSAM result.
-    for group in plan_group_jobs(result, selection):
-        plotter = result.tsam_results_by_group[group].plot
-        files.append(
-            _write_figure(
-                style_tsam_figure(
-                    plotter.cluster_weights(title=""),
-                    f"Cluster weights: {group}",
-                ),
-                output_dir / f"group_{_slug(group)}_cluster_weights.html",
-            )
-        )
-        files.append(
-            _write_figure(
-                style_tsam_figure(
-                    plotter.accuracy(title=""),
-                    f"Cluster accuracy: {group}",
-                ),
-                output_dir / f"group_{_slug(group)}_cluster_accuracy.html",
-            )
-        )
+    files.append(_write_group_diagnostics(result, assets_dir))
 
-    drilldown_jobs, skipped = plan_drilldown_jobs(result, selection)
-    for job in drilldown_jobs:
-        plotter = result.tsam_results_by_group[job.group].plot
-        # Prefixes encode the selector state so each exported widget selection
-        # has a stable, addressable file.
-        prefix = (
-            f"group_{_slug(job.group)}_country_{job.country}_"
-            f"feature_{_slug(job.feature_group)}"
-        )
-        files.append(
-            _write_figure(
-                style_tsam_figure(
-                    plotter.cluster_representatives(columns=job.columns, title=""),
-                    f"Cluster representative profiles: {job.group}",
-                ),
-                output_dir / f"{prefix}_representatives.html",
-            )
-        )
-        files.append(
-            _write_figure(
-                style_tsam_figure(
-                    plotter.cluster_members(columns=job.columns, slider="cluster", title=""),
-                    f"Cluster members: {job.group}",
-                ),
-                output_dir / f"{prefix}_members.html",
-            )
-        )
-        files.append(
-            _write_figure(
-                style_tsam_figure(
-                    plotter.compare(columns=job.columns, title=""),
-                    f"Original vs reconstructed: {job.group}",
-                ),
-                output_dir / f"{prefix}_comparison.html",
-            )
-        )
-        files.append(
-            _write_figure(
-                style_tsam_figure(
-                    plotter.residuals(columns=job.columns, title=""),
-                    f"Residuals: {job.group}",
-                ),
-                output_dir / f"{prefix}_residuals.html",
-            )
-        )
+    files.append(write_drilldown_dashboard(result, assets_dir))
+    skipped: list[dict[str, str]] = []
 
     index = _write_index(output_dir, files)
     files.append(index)
-    plotly_bundle = output_dir / "plotly.min.js"
+    plotly_bundle = assets_dir / "plotly.min.js"
     if plotly_bundle.exists():
         files.append(plotly_bundle)
     return ChartExportResult(files=files, skipped=skipped)

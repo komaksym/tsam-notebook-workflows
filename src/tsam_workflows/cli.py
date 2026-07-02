@@ -14,7 +14,6 @@ import pandas as pd
 
 from tsam_workflows.charts import ChartExportError, export_charts
 from tsam_workflows.config import (
-    ChartSelection,
     GroupedWorkflowConfig,
     SUPPORTED_CLUSTER_METHODS,
     default_dataset_specs,
@@ -39,22 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=SUPPORTED_CLUSTER_METHODS,
         default="hierarchical",
     )
-    grouped.add_argument("--chart-groups", nargs="+")
-    grouped.add_argument("--chart-countries", nargs="+")
-    grouped.add_argument("--chart-feature-groups", nargs="+")
     grouped.add_argument("--overwrite", action="store_true")
     return parser
-
-
-def parse_chart_selection(args: argparse.Namespace) -> ChartSelection:
-    """Convert parsed chart selector arguments into a typed selection object."""
-    return ChartSelection(
-        groups=tuple(args.chart_groups) if args.chart_groups else None,
-        countries=tuple(args.chart_countries) if args.chart_countries else None,
-        feature_groups=tuple(args.chart_feature_groups)
-        if args.chart_feature_groups
-        else None,
-    )
 
 
 def config_from_args(args: argparse.Namespace) -> GroupedWorkflowConfig:
@@ -68,7 +53,6 @@ def config_from_args(args: argparse.Namespace) -> GroupedWorkflowConfig:
         working_clusters=args.working_clusters,
         non_working_clusters=args.non_working_clusters,
         cluster_method=args.cluster_method,
-        chart_selection=parse_chart_selection(args),
         overwrite=args.overwrite,
     )
 
@@ -129,17 +113,6 @@ def _write_manifest(
             "non_working_clusters": config.non_working_clusters,
             "cluster_method": config.cluster_method,
             "preserve_column_means": config.preserve_column_means,
-            "chart_selection": {
-                "groups": list(config.chart_selection.groups)
-                if config.chart_selection.groups
-                else None,
-                "countries": list(config.chart_selection.countries)
-                if config.chart_selection.countries
-                else None,
-                "feature_groups": list(config.chart_selection.feature_groups)
-                if config.chart_selection.feature_groups
-                else None,
-            },
         },
         "dataset_coverage": _json_records(result.dataset_coverage),
         "selected_countries": list(getattr(result, "selected_countries", ())),
@@ -182,7 +155,7 @@ def run_grouped_command(args: argparse.Namespace) -> int:
         result = run_grouped_workflow(config, specs)
         artifacts = _save_tables(result, staging_dir)
         charts_dir = staging_dir / "charts"
-        chart_result = export_charts(result, charts_dir, config.chart_selection)
+        chart_result = export_charts(result, charts_dir)
         artifacts.extend(chart_result.files)
         manifest = _write_manifest(
             config,
