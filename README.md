@@ -55,7 +55,7 @@ uv run tsam-workflows grouped \
   --data-dir data \
   --output-dir outputs/approach_1 \
   --year 2025 \
-  --countries DE \
+  --countries ALL \
   --working-clusters 5 \
   --non-working-clusters 2 \
   --cluster-method hierarchical \
