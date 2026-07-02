@@ -7,10 +7,12 @@ import pytest
 
 from tsam_workflows.config import DatasetSpec
 from tsam_workflows.data import (
+    daily_period_timesteps,
     expected_hourly_index,
     filter_countries,
     load_dataset,
     normalize_country_args,
+    set_snapshot_index,
     validate_df,
 )
 
@@ -89,8 +91,43 @@ def test_validate_df_rejects_missing_hour() -> None:
     index = expected_hourly_index(2025, "h").delete(5)
     df = pd.DataFrame({"DE_demand_2025": range(len(index))}, index=index)
 
-    with pytest.raises(ValueError, match="expected 8760 rows"):
-        validate_df(df, "feature_data", 2025, "h")
+    with pytest.raises(ValueError, match="regular sampling frequency"):
+        validate_df(df, "feature_data", 2025)
+
+
+def test_set_snapshot_index_uses_configured_timestamp_format() -> None:
+    df = pd.DataFrame(
+        {
+            "time": ["2025-01-01 00:00:00", "2025-01-01 00:30:00"],
+            "DE_demand_2025": [1.0, 2.0],
+        }
+    )
+
+    indexed = set_snapshot_index(df, "time", "%Y-%m-%d %H:%M:%S")
+
+    assert indexed.index.equals(
+        pd.date_range("2025-01-01", periods=2, freq="30min", name="time")
+    )
+
+
+def test_validate_df_infers_complete_half_hour_frequency() -> None:
+    index = pd.date_range(
+        "2025-01-01",
+        "2026-01-01",
+        freq="30min",
+        inclusive="left",
+    )
+    df = pd.DataFrame({"DE_demand_2025": range(len(index))}, index=index)
+
+    frequency = validate_df(df, "feature_data", 2025)
+
+    assert frequency == pd.Timedelta(minutes=30)
+    assert daily_period_timesteps(frequency) == 48
+
+
+def test_daily_period_timesteps_rejects_frequency_that_cannot_form_days() -> None:
+    with pytest.raises(ValueError, match="does not divide evenly into 24 hours"):
+        daily_period_timesteps(pd.Timedelta(minutes=7))
 
 
 def test_filter_countries_normalizes_deduplicates_and_keeps_asymmetric_features() -> None:
@@ -118,4 +155,3 @@ def test_filter_countries_rejects_unknown_country() -> None:
 def test_normalize_country_args_rejects_all_mixed_with_codes() -> None:
     with pytest.raises(ValueError, match="'all' cannot be combined"):
         normalize_country_args(["all", "DE"])
-

@@ -1,0 +1,44 @@
+input:
+  snapshot_column: snapshot
+  timestamp_format: "%d.%m.%Y %H:%M"
+
+datasets:
+  demand:
+    path: ../data/Demand_ENTSO_E.csv
+    separator: ";"
+    feature: demand
+    feature_group: demand
+    unit_interval: false
+  solar_cf:
+    path: ../data/solar_capacity_factors.csv
+    separator: ";"
+    feature: solar
+    feature_group: capacity_factors
+    unit_interval: true
+  onwind_cf:
+    path: ../data/onwind_capacity_factors.csv
+    separator: ","
+    feature: onwind
+    feature_group: capacity_factors
+    unit_interval: true
+  ror_cf:
+    path: ../data/ror_capacity_factors.csv
+    separator: ","
+    feature: ror
+    feature_group: capacity_factors
+    unit_interval: true
+  hydro_inflow:
+    path: ../data/hydro_inflow_scaled_deduped_2025.csv
+    separator: ","
+    feature: hydro
+    feature_group: hydro
+    unit_interval: false
+
+workflow:
+  year: 2025
+  countries: ALL
+  working_clusters: 5
+  non_working_clusters: 2
+  cluster_method: hierarchical
+  non_working_weekdays: [Saturday, Sunday]
+  preserve_column_means: false

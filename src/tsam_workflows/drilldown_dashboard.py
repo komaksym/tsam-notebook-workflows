@@ -54,6 +54,11 @@ def build_drilldown_payload(result: Any) -> dict[str, Any]:
         "groups": groups,
         "features": result.feature_columns_by_country_and_group,
         "country_labels": {code: label for label, code in options},
+        "representative_mode": (
+            "Mean-preserved synthetic representatives"
+            if getattr(result, "preserve_column_means", False)
+            else "Observed medoid representatives"
+        ),
     }
 
 
@@ -83,6 +88,11 @@ def write_drilldown_dashboard(result: Any, output_dir: Path) -> Path:
             ("residuals", "Residuals"),
         )
     )
+    representative_mode = (
+        "Mean-preserved synthetic representatives"
+        if getattr(result, "preserve_column_means", False)
+        else "Observed medoid representatives"
+    )
     path = output_dir / "drilldown_dashboard.html"
     path.write_text(
         "<!doctype html><html><head><meta charset='utf-8'>"
@@ -96,6 +106,7 @@ def write_drilldown_dashboard(result: Any, output_dir: Path) -> Path:
         "#chart{min-height:720px;}[hidden]{display:none!important;}"
         "</style></head><body>"
         "<h1>TSAM feature drilldowns</h1>"
+        f'<p id="representative-mode">{html.escape(representative_mode)}</p>'
         '<div class="controls">'
         '<label>Group<select id="group-select">'
         f"{group_options}</select></label>"

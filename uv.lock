@@ -2075,6 +2075,7 @@ dependencies = [
     { name = "notebook" },
     { name = "pandas" },
     { name = "plotly" },
+    { name = "pyyaml" },
     { name = "tsam" },
 ]
 
@@ -2099,6 +2100,7 @@ requires-dist = [
     { name = "notebook", specifier = ">=7.0.0" },
     { name = "pandas", specifier = ">=3.0.1" },
     { name = "plotly", specifier = ">=6.7.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "tsam", specifier = ">=3.3.0" },
 ]
 

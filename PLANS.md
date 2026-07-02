@@ -200,3 +200,31 @@ print a direct local URL to `charts/index.html` before the artifact directory.
    root, and preserve relative offline loading.
 3. Run an overwrite smoke test to verify obsolete root files are removed, then
    browser-test the dashboard and run the full validation gate.
+
+## Optional YAML Workflow Configuration
+
+### Summary
+
+Add an optional `--config` YAML file for custom dataset paths, separators,
+canonical feature names, chart feature groups, unit-interval validation,
+timestamp parsing, workflow selection, calendar overrides, and TSAM mean
+preservation. Preserve the current no-config CLI behavior and let explicitly
+provided CLI flags override YAML values.
+
+### Milestones
+
+1. Add failing configuration tests for strict YAML schema validation, paths
+   relative to the YAML file, `countries: ALL`, subset countries, and defaults;
+   then add PyYAML as a direct dependency and implement the loader.
+2. Add failing CLI tests for optional `--config` loading and precedence
+   `built-in defaults < YAML < explicit CLI flags`; keep output publication
+   settings CLI-only.
+3. Add failing data tests for configurable timestamp columns/formats, inferred
+   common sampling frequency, complete-year validation, and a fixed 24-hour
+   TSAM period whose timestep count follows the inferred resolution.
+4. Add failing aggregation tests proving `preserve_column_means: true` exports
+   TSAM's rescaled representatives while retaining medoid-date provenance and
+   recording the effective setting and inferred frequency in the manifest.
+5. Add an example YAML file and README usage documentation, then run lint,
+   typecheck, all tests, notebook execution, CLI help, package build, diff
+   checks, and real default/configured CLI smoke runs.

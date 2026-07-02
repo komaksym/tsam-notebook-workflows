@@ -116,6 +116,9 @@ def fake_result() -> SimpleNamespace:
         dataset_coverage=pd.DataFrame(
             [{"dataset": "demand", "country_count": 1, "countries": "DE", "missing_from_union": "-"}]
         ),
+        sampling_frequency=pd.Timedelta(hours=1),
+        period_timesteps=24,
+        preserve_column_means=True,
     )
 
 
@@ -220,7 +223,7 @@ def test_approach_notebook_uses_original_chart_defaults() -> None:
     assert "COUNTRY_OPTIONS = country_options(" in all_code
 
 
-def test_approach_notebook_documents_unsupported_tsam_customization_methods() -> None:
+def test_approach_notebook_documents_tsam_customization_support() -> None:
     notebook_path = Path(__file__).parents[1] / "src" / "approach_1_ALL.ipynb"
     notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
     markdown_by_heading = {
@@ -249,6 +252,8 @@ def test_approach_notebook_documents_unsupported_tsam_customization_methods() ->
         "not supported by the grouped workflow or CLI",
     ):
         assert detail in preservation
+    assert "workflow.preserve_column_means: true" in preservation
+    assert "exports TSAM's rescaled representative values" in preservation
 
 
 def test_approach_notebook_has_linked_table_of_contents_after_title() -> None:
@@ -344,6 +349,7 @@ def test_export_charts_writes_summary_and_group_files_by_default(
     assert '"FR":"France (FR)"' in drilldowns
     assert "DE_demand_2025" in drilldowns
     assert "Plotly.react" in drilldowns
+    assert "Mean-preserved synthetic representatives" in drilldowns
 
     index = (tmp_path / "index.html").read_text(encoding="utf-8")
     assert '<nav id="chart-navigation"' in index
@@ -484,6 +490,10 @@ def test_cli_publishes_staged_artifacts_with_manifest(
     assert (output_dir / "manifest.json").is_file()
     manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
     assert "chart_selection" not in manifest["config"]
+    assert manifest["config"]["sampling_frequency"] == "0 days 01:00:00"
+    assert manifest["config"]["period_timesteps"] == 24
+    assert manifest["config"]["preserve_column_means"] is False
+    assert manifest["datasets"]["demand"]["separator"] == ";"
     assert not list(tmp_path.glob(".out.*"))
     captured = capsys.readouterr()
     assert captured.err == (
