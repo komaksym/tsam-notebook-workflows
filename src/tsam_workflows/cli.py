@@ -69,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
 def resolve_grouped_inputs(
     args: argparse.Namespace,
 ) -> tuple[GroupedWorkflowConfig, dict[str, DatasetSpec]]:
-    """Merge defaults, optional YAML, and explicit CLI grouped settings."""
+    """Resolve grouped workflow settings from defaults, YAML, and CLI overrides."""
     if args.config is not None:
         if args.data_dir is not None:
             raise ValueError("--data-dir cannot be used with --config")
@@ -115,7 +115,7 @@ def resolve_grouped_inputs(
 
 
 def config_from_args(args: argparse.Namespace) -> GroupedWorkflowConfig:
-    """Convert parsed grouped-command inputs into workflow configuration."""
+    """Return only runtime config for callers that do not need dataset specs."""
     config, _ = resolve_grouped_inputs(args)
     return config
 
@@ -163,7 +163,7 @@ def _write_manifest(
     artifacts: list[Path],
     skipped: list[dict[str, str]],
 ) -> Path:
-    """Write the run manifest with config, coverage, artifacts, and skips."""
+    """Write reproducibility metadata for the published grouped workflow run."""
     artifact_names = {
         str(path.relative_to(output_dir)) for path in artifacts if path.exists()
     }

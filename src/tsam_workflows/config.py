@@ -146,6 +146,7 @@ class GroupedConfigFile:
 
 
 def _require_mapping(value: object, context: str) -> Mapping[str, Any]:
+    """Return ``value`` as a string-keyed mapping or raise a contextual error."""
     if not isinstance(value, Mapping):
         raise ValueError(f"{context} must be a mapping")
     if not all(isinstance(key, str) for key in value):
@@ -158,24 +159,28 @@ def _reject_unknown_keys(
     allowed: set[str],
     context: str,
 ) -> None:
+    """Reject config keys outside the schema for one YAML section."""
     unknown = sorted(set(values).difference(allowed))
     if unknown:
         raise ValueError(f"Unknown {context} keys: {unknown}")
 
 
 def _require_string(value: object, context: str) -> str:
+    """Return a non-empty string config value or raise a contextual error."""
     if not isinstance(value, str) or not value:
         raise ValueError(f"{context} must be a non-empty string")
     return value
 
 
 def _require_positive_int(value: object, context: str) -> int:
+    """Return a positive integer config value, excluding booleans."""
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(f"{context} must be a positive integer")
     return value
 
 
 def _parse_yaml_countries(value: object) -> tuple[str, ...] | None:
+    """Normalize YAML country selection, using ``None`` for all countries."""
     from tsam_workflows.data import normalize_country_args
 
     if isinstance(value, str):
@@ -193,6 +198,7 @@ def _parse_dataset_specs(
     values: object,
     config_dir: Path,
 ) -> dict[str, DatasetSpec]:
+    """Parse YAML dataset entries and resolve relative paths from ``config_dir``."""
     datasets = _require_mapping(values, "datasets")
     if not datasets:
         raise ValueError("At least one dataset must be configured")

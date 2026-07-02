@@ -178,7 +178,11 @@ def collect_representative_day_data(
     aggregation_result: Any,
     group_data_with_metadata: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Build reduced hourly data and original-day assignments for one group."""
+    """Build representative profiles and original-day assignments for one group.
+
+    The exported representative values come from TSAM, while the selected
+    medoid date remains as provenance for the calendar day behind each cluster.
+    """
     representative_day_chunks: list[pd.DataFrame] = []
     representative_day_indices = aggregation_result.clustering.cluster_centers
     cluster_weights_by_id = aggregation_result.cluster_weights
@@ -249,7 +253,7 @@ def collect_representative_day_data(
 
 
 def build_cluster_config(method: ClusterMethod) -> tsam.ClusterConfig:
-    """Build the TSAM cluster config used by this milestone."""
+    """Build the TSAM medoid-representation cluster configuration."""
     return tsam.ClusterConfig(method=method, representation="medoid")
 
 
@@ -259,7 +263,7 @@ def run_aggregation_all_groups(
     feature_columns: list[str],
     config: GroupedWorkflowConfig,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    """Run one TSAM aggregation per group and combine the outputs."""
+    """Run one 24-hour TSAM aggregation per group and combine the outputs."""
     reduced_hourly_chunks: list[pd.DataFrame] = []
     day_assignment_chunks: list[pd.DataFrame] = []
     tsam_results_by_group: dict[str, Any] = {}
@@ -302,7 +306,7 @@ def run_aggregation_all_groups(
 
 
 def build_representative_days(reduced_hourly_df: pd.DataFrame) -> pd.DataFrame:
-    """Build the representative-day inventory with the notebook CSV schema."""
+    """Build one provenance row per exported representative profile."""
     return (
         reduced_hourly_df.drop_duplicates(subset="representative_id", keep="first")
         .rename(columns={"date": "selected_medoid_date"})
@@ -364,8 +368,9 @@ def _load_feature_data(
     """Load, validate, join, and country-filter configured feature datasets.
 
     Returns the TSAM-ready feature table, dataset coverage diagnostics, and the
-    normalized selected country codes. Validation happens before joining so
-    malformed source files fail with dataset-specific error messages.
+    normalized selected country codes plus the shared sampling frequency.
+    Validation happens before joining so malformed source files fail with
+    dataset-specific error messages.
     """
     loaded = load_datasets(dataset_specs, config.year, config.snapshot_column)
     for name, df in loaded.items():

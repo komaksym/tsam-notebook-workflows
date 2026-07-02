@@ -113,7 +113,7 @@ def load_datasets(
 
 
 def expected_hourly_index(year: int, frequency: str) -> pd.DatetimeIndex:
-    """Return the complete hourly index for one calendar year."""
+    """Return the complete timestamp index for one calendar year."""
     return pd.date_range(
         start=pd.Timestamp(year=year, month=1, day=1),
         end=pd.Timestamp(year=year + 1, month=1, day=1),
@@ -127,7 +127,7 @@ def set_snapshot_index(
     snapshot_column: str = "snapshot",
     timestamp_format: str = DEFAULT_TIMESTAMP_FORMAT,
 ) -> pd.DataFrame:
-    """Return a copy with ``snapshot_column`` parsed as the DatetimeIndex."""
+    """Return a copy indexed by timestamps parsed with ``timestamp_format``."""
     if snapshot_column not in df.columns:
         raise KeyError(f"{snapshot_column!r} is not a column in the DataFrame")
     result = df.copy()
@@ -143,7 +143,7 @@ def infer_sampling_frequency(
     index: pd.DatetimeIndex,
     name: str,
 ) -> pd.Timedelta:
-    """Return the single positive interval between every adjacent timestamp."""
+    """Infer the one regular positive timestep used by a dataset index."""
     if len(index) < 2:
         raise ValueError(f"{name}: at least two timestamps are required")
     if not index.is_monotonic_increasing or index.has_duplicates:
@@ -160,7 +160,7 @@ def infer_sampling_frequency(
 
 
 def daily_period_timesteps(frequency: pd.Timedelta) -> int:
-    """Return how many samples form one 24-hour representative day."""
+    """Return the number of regular samples in one 24-hour TSAM period."""
     day = pd.Timedelta(days=1)
     if frequency <= pd.Timedelta(0) or day % frequency != pd.Timedelta(0):
         raise ValueError(
@@ -192,7 +192,7 @@ def validate_df(
     name: str,
     year_to_check: int,
 ) -> pd.Timedelta:
-    """Validate TSAM input and return its inferred regular sampling frequency."""
+    """Validate complete-year TSAM input and return its regular timestep."""
 
     if not isinstance(df.index, pd.DatetimeIndex):
         raise TypeError(f"{name}: index must be a DatetimeIndex")
