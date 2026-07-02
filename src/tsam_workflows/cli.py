@@ -125,17 +125,53 @@ def _write_manifest(
 
 
 def _publish_staging(staging_dir: Path, output_dir: Path, overwrite: bool) -> None:
-    """Atomically move a completed staging directory into the final location."""
+    """Publish staged artifacts while preserving existing directory identities."""
     if output_dir.exists():
         if output_dir.is_dir():
             if any(output_dir.iterdir()) and not overwrite:
                 raise ValueError(f"Output directory is not empty: {output_dir}")
-            shutil.rmtree(output_dir)
+            _merge_staging_directory(staging_dir, output_dir)
+            return
         elif overwrite:
             output_dir.unlink()
         else:
             raise ValueError(f"Output path exists and is not a directory: {output_dir}")
     staging_dir.rename(output_dir)
+
+
+def _remove_artifact(path: Path) -> None:
+    """Remove one obsolete artifact regardless of whether it is a file or directory."""
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+def _merge_staging_directory(staging_dir: Path, output_dir: Path) -> None:
+    """Move staged files into stable directories and publish the manifest last."""
+    staged_names = {path.name for path in staging_dir.iterdir()}
+    for output_path in output_dir.iterdir():
+        if output_path.name not in staged_names and output_path.name != ".DS_Store":
+            _remove_artifact(output_path)
+
+    staged_paths = sorted(
+        staging_dir.iterdir(),
+        key=lambda path: (path.name == "manifest.json", path.name),
+    )
+    for staging_path in staged_paths:
+        output_path = output_dir / staging_path.name
+        if staging_path.is_dir() and not staging_path.is_symlink():
+            if output_path.exists() and not (
+                output_path.is_dir() and not output_path.is_symlink()
+            ):
+                _remove_artifact(output_path)
+            output_path.mkdir(exist_ok=True)
+            _merge_staging_directory(staging_path, output_path)
+        else:
+            if output_path.exists() and output_path.is_dir():
+                _remove_artifact(output_path)
+            staging_path.replace(output_path)
+    staging_dir.rmdir()
 
 
 def run_grouped_command(args: argparse.Namespace) -> int:
