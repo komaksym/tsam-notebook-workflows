@@ -21,7 +21,7 @@ inspection, and one custom grouped aggregation approach.
 
 - `src/quickstart.ipynb` - annual baseline aggregation with validation,
   diagnostics, plotting, output inspection, and saved results.
-- `src/approach_1.ipynb` - monthly working/non-working grouped aggregation with
+- `src/approach_1_ALL.ipynb` - monthly working/non-working grouped aggregation with
   representative-day outputs and group-level diagnostics.
 
 ## Installation
@@ -45,6 +45,36 @@ uv run jupyter notebook
 ```
 
 Then open the notebooks from `src/`.
+
+## Grouped CLI
+
+Run the original 5-working/2-non-working representative configuration with:
+
+```bash
+uv run tsam-workflows grouped \
+  --data-dir data \
+  --output-dir outputs/approach_1 \
+  --year 2025 \
+  --countries DE \
+  --working-clusters 5 \
+  --non-working-clusters 2 \
+  --cluster-method hierarchical \
+  --overwrite
+```
+
+Open `charts/index.html`, whose direct local URL is printed when the command
+finishes. It provides a responsive sidebar for every chart in one workspace.
+The only other item in `charts/` is the internal `assets/` folder, which holds
+the individual chart pages and shared `plotly.min.js` bundle. The report works
+offline and requires no additional dependency or server.
+
+The feature drilldown embeds each group's reusable TSAM result arrays once and
+renders the selected group/country/feature view in the browser. Selecting more
+countries therefore increases one dashboard's data instead of creating
+thousands of HTML files.
+Runs are generated in a staging directory. With `--overwrite`, artifacts are
+then replaced inside the existing output folders so open Finder and IDE windows
+remain attached to the populated directories.
 
 ## Data
 
