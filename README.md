@@ -21,7 +21,7 @@ inspection, and one custom grouped aggregation approach.
 
 - `src/quickstart.ipynb` - annual baseline aggregation with validation,
   diagnostics, plotting, output inspection, and saved results.
-- `src/approach_1.ipynb` - monthly working/non-working grouped aggregation with
+- `src/approach_1_ALL.ipynb` - monthly working/non-working grouped aggregation with
   representative-day outputs and group-level diagnostics.
 
 ## Installation
@@ -45,6 +45,25 @@ uv run jupyter notebook
 ```
 
 Then open the notebooks from `src/`.
+
+## Grouped CLI
+
+Run the original 5-working/2-non-working representative configuration with:
+
+```bash
+uv run tsam-workflows grouped \
+  --data-dir data \
+  --output-dir outputs/approach_1 \
+  --year 2025 \
+  --countries DE \
+  --working-clusters 5 \
+  --non-working-clusters 2 \
+  --cluster-method hierarchical \
+  --overwrite
+```
+
+Open `charts/index.html`, whose direct local URL is printed when the command
+finishes. It provides a responsive sidebar for every chart in one workspace.
 
 ## Data
 

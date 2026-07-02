@@ -1,5 +1,7 @@
 # Python-generated files
-__pycache__/ *.py[oc]
+__pycache__/
+*.py[oc]
+.ipynb_checkpoints/
 build/
 dist/
 wheels/
@@ -14,6 +16,8 @@ wheels/
 # Local only
 docs/
 original_tsam_examples/
+/outputs/
+/src/outputs/
 
 # Already in the pyproject.toml
 .python-version
