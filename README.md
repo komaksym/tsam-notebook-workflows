@@ -64,17 +64,6 @@ uv run tsam-workflows grouped \
 
 Open `charts/index.html`, whose direct local URL is printed when the command
 finishes. It provides a responsive sidebar for every chart in one workspace.
-The only other item in `charts/` is the internal `assets/` folder, which holds
-the individual chart pages and shared `plotly.min.js` bundle. The report works
-offline and requires no additional dependency or server.
-
-The feature drilldown embeds each group's reusable TSAM result arrays once and
-renders the selected group/country/feature view in the browser. Selecting more
-countries therefore increases one dashboard's data instead of creating
-thousands of HTML files.
-Runs are generated in a staging directory. With `--overwrite`, artifacts are
-then replaced inside the existing output folders so open Finder and IDE windows
-remain attached to the populated directories.
 
 ## Data
 
