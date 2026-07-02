@@ -12,6 +12,7 @@ import tsam
 from tsam_workflows.config import ClusterMethod, DatasetSpec, GroupedWorkflowConfig
 from tsam_workflows.data import (
     build_dataset_coverage,
+    daily_period_timesteps,
     filter_countries,
     join_datasets,
     load_datasets,
@@ -22,6 +23,8 @@ from tsam_workflows.data import (
 )
 
 DAY_TYPE_SORT_ORDER: dict[str, int] = {"working": 0, "non-working": 1}
+DAILY_PERIOD_DURATION_HOURS = 24
+NUMERICAL_TOLERANCE = 1e-9
 REPRESENTATIVE_DAY_COLUMNS: list[str] = [
     "selected_medoid_date",
     "representative_id",
@@ -47,6 +50,9 @@ class GroupedWorkflowResult:
     feature_group_by_feature: dict[str, str]
     selected_countries: tuple[str, ...]
     group_ids: list[str]
+    sampling_frequency: pd.Timedelta
+    period_timesteps: int
+    preserve_column_means: bool
 
 
 def build_hourly_metadata(
@@ -172,7 +178,11 @@ def collect_representative_day_data(
     aggregation_result: Any,
     group_data_with_metadata: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Build reduced hourly data and original-day assignments for one group."""
+    """Build representative profiles and original-day assignments for one group.
+
+    The exported representative values come from TSAM, while the selected
+    medoid date remains as provenance for the calendar day behind each cluster.
+    """
     representative_day_chunks: list[pd.DataFrame] = []
     representative_day_indices = aggregation_result.clustering.cluster_centers
     cluster_weights_by_id = aggregation_result.cluster_weights
@@ -212,6 +222,26 @@ def collect_representative_day_data(
             raise ValueError(
                 f"{group_id}: representative day {representative_day_index} is empty"
             )
+        representative_values = aggregation_result.cluster_representatives.xs(
+            cluster_id,
+            level=0,
+        )
+        if len(representative_values) != len(representative_day_hours):
+            raise ValueError(
+                f"{group_id}: representative {cluster_id} has "
+                f"{len(representative_values)} timesteps; expected "
+                f"{len(representative_day_hours)}"
+            )
+        missing_columns = set(representative_values.columns).difference(
+            representative_day_hours.columns
+        )
+        if missing_columns:
+            raise ValueError(
+                f"{group_id}: representative columns missing from source metadata: "
+                f"{sorted(missing_columns)}"
+            )
+        for column in representative_values.columns:
+            representative_day_hours[column] = representative_values[column].to_numpy()
         representative_day_hours["cluster_id"] = cluster_id
         representative_day_hours["cluster_weight"] = cluster_weights_by_id[
             cluster_id
@@ -223,7 +253,7 @@ def collect_representative_day_data(
 
 
 def build_cluster_config(method: ClusterMethod) -> tsam.ClusterConfig:
-    """Build the TSAM cluster config used by this milestone."""
+    """Build the TSAM medoid-representation cluster configuration."""
     return tsam.ClusterConfig(method=method, representation="medoid")
 
 
@@ -233,7 +263,7 @@ def run_aggregation_all_groups(
     feature_columns: list[str],
     config: GroupedWorkflowConfig,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    """Run one TSAM aggregation per group and combine the outputs."""
+    """Run one 24-hour TSAM aggregation per group and combine the outputs."""
     reduced_hourly_chunks: list[pd.DataFrame] = []
     day_assignment_chunks: list[pd.DataFrame] = []
     tsam_results_by_group: dict[str, Any] = {}
@@ -252,10 +282,10 @@ def run_aggregation_all_groups(
         aggregation_result = tsam.aggregate(
             data=group_features,
             n_clusters=n_clusters,
-            period_duration=config.period_duration_hours,
+            period_duration=DAILY_PERIOD_DURATION_HOURS,
             preserve_column_means=config.preserve_column_means,
             cluster=cluster,
-            numerical_tolerance=config.numerical_tolerance,
+            numerical_tolerance=NUMERICAL_TOLERANCE,
         )
         tsam_results_by_group[group_id] = aggregation_result
 
@@ -276,7 +306,7 @@ def run_aggregation_all_groups(
 
 
 def build_representative_days(reduced_hourly_df: pd.DataFrame) -> pd.DataFrame:
-    """Build the representative-day inventory with the notebook CSV schema."""
+    """Build one provenance row per exported representative profile."""
     return (
         reduced_hourly_df.drop_duplicates(subset="representative_id", keep="first")
         .rename(columns={"date": "selected_medoid_date"})
@@ -334,21 +364,34 @@ def build_feature_columns_by_country_and_group(
 def _load_feature_data(
     config: GroupedWorkflowConfig,
     dataset_specs: Mapping[str, DatasetSpec],
-) -> tuple[pd.DataFrame, pd.DataFrame, tuple[str, ...]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, tuple[str, ...], pd.Timedelta]:
     """Load, validate, join, and country-filter configured feature datasets.
 
     Returns the TSAM-ready feature table, dataset coverage diagnostics, and the
-    normalized selected country codes. Validation happens before joining so
-    malformed source files fail with dataset-specific error messages.
+    normalized selected country codes plus the shared sampling frequency.
+    Validation happens before joining so malformed source files fail with
+    dataset-specific error messages.
     """
     loaded = load_datasets(dataset_specs, config.year, config.snapshot_column)
     for name, df in loaded.items():
         validate_loaded_columns(name, df, config.snapshot_column)
 
     indexed: dict[str, pd.DataFrame] = {}
+    sampling_frequency: pd.Timedelta | None = None
     for name, df in loaded.items():
-        indexed_df = set_snapshot_index(df, config.snapshot_column)
-        validate_df(indexed_df, name, config.year, config.hourly_frequency)
+        indexed_df = set_snapshot_index(
+            df,
+            config.snapshot_column,
+            config.timestamp_format,
+        )
+        dataset_frequency = validate_df(indexed_df, name, config.year)
+        if sampling_frequency is None:
+            sampling_frequency = dataset_frequency
+        elif dataset_frequency != sampling_frequency:
+            raise ValueError(
+                f"{name}: sampling frequency {dataset_frequency} differs from "
+                f"{sampling_frequency}"
+            )
         if dataset_specs[name].unit_interval:
             validate_unit_interval(indexed_df, name)
         indexed[name] = indexed_df
@@ -356,7 +399,9 @@ def _load_feature_data(
     dataset_coverage = build_dataset_coverage(indexed)
     feature_data = join_datasets(indexed)
     feature_data, selected_countries = filter_countries(feature_data, config.countries)
-    return feature_data, dataset_coverage, selected_countries
+    if sampling_frequency is None:
+        raise ValueError("At least one dataset must be configured")
+    return feature_data, dataset_coverage, selected_countries, sampling_frequency
 
 
 def run_grouped_workflow(
@@ -367,10 +412,13 @@ def run_grouped_workflow(
     if config.working_clusters < 1 or config.non_working_clusters < 1:
         raise ValueError("Cluster counts must be positive integers")
 
-    feature_data, dataset_coverage, selected_countries = _load_feature_data(
+    feature_data, dataset_coverage, selected_countries, sampling_frequency = (
+        _load_feature_data(
         config,
         dataset_specs,
+        )
     )
+    period_timesteps = daily_period_timesteps(sampling_frequency)
     feature_columns = feature_data.columns.tolist()
     hourly_data_with_metadata = build_hourly_metadata(
         feature_data,
@@ -411,4 +459,7 @@ def run_grouped_workflow(
         feature_group_by_feature=feature_group_by_feature,
         selected_countries=selected_countries,
         group_ids=group_ids,
+        sampling_frequency=sampling_frequency,
+        period_timesteps=period_timesteps,
+        preserve_column_means=config.preserve_column_means,
     )

@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 
 import pandas as pd
 
-from tsam_workflows.config import DatasetSpec
+from tsam_workflows.config import DEFAULT_TIMESTAMP_FORMAT, DatasetSpec
 
 CANONICAL_COLUMN_RE = re.compile(
     r"(?P<country>[A-Z]{2})_(?P<feature>[A-Za-z0-9]+)_(?P<year>\d{4})"
@@ -113,7 +113,7 @@ def load_datasets(
 
 
 def expected_hourly_index(year: int, frequency: str) -> pd.DatetimeIndex:
-    """Return the complete hourly index for one calendar year."""
+    """Return the complete timestamp index for one calendar year."""
     return pd.date_range(
         start=pd.Timestamp(year=year, month=1, day=1),
         end=pd.Timestamp(year=year + 1, month=1, day=1),
@@ -125,17 +125,48 @@ def expected_hourly_index(year: int, frequency: str) -> pd.DatetimeIndex:
 def set_snapshot_index(
     df: pd.DataFrame,
     snapshot_column: str = "snapshot",
+    timestamp_format: str = DEFAULT_TIMESTAMP_FORMAT,
 ) -> pd.DataFrame:
-    """Return a copy with ``snapshot_column`` parsed as the DatetimeIndex."""
+    """Return a copy indexed by timestamps parsed with ``timestamp_format``."""
     if snapshot_column not in df.columns:
         raise KeyError(f"{snapshot_column!r} is not a column in the DataFrame")
     result = df.copy()
     result[snapshot_column] = pd.to_datetime(
         result[snapshot_column],
-        format="%d.%m.%Y %H:%M",
+        format=timestamp_format,
         errors="raise",
     )
     return result.set_index(snapshot_column, drop=True)
+
+
+def infer_sampling_frequency(
+    index: pd.DatetimeIndex,
+    name: str,
+) -> pd.Timedelta:
+    """Infer the one regular positive timestep used by a dataset index."""
+    if len(index) < 2:
+        raise ValueError(f"{name}: at least two timestamps are required")
+    if not index.is_monotonic_increasing or index.has_duplicates:
+        raise ValueError(f"{name}: timestamps must be unique and increasing")
+
+    intervals = index[1:] - index[:-1]
+    unique_intervals = intervals.unique()
+    if len(unique_intervals) != 1:
+        raise ValueError(f"{name}: timestamps do not have a regular sampling frequency")
+    frequency = pd.Timedelta(unique_intervals[0])
+    if frequency <= pd.Timedelta(0):
+        raise ValueError(f"{name}: sampling frequency must be positive")
+    return frequency
+
+
+def daily_period_timesteps(frequency: pd.Timedelta) -> int:
+    """Return the number of regular samples in one 24-hour TSAM period."""
+    day = pd.Timedelta(days=1)
+    if frequency <= pd.Timedelta(0) or day % frequency != pd.Timedelta(0):
+        raise ValueError(
+            f"Sampling frequency {frequency} does not divide evenly into 24 hours"
+        )
+    return int(day / frequency)
 
 
 def validate_loaded_columns(
@@ -160,15 +191,15 @@ def validate_df(
     df: pd.DataFrame,
     name: str,
     year_to_check: int,
-    period: str,
-) -> None:
-    """Validate that a DataFrame is ready for hourly TSAM aggregation."""
-    expected_index = expected_hourly_index(year_to_check, period)
+) -> pd.Timedelta:
+    """Validate complete-year TSAM input and return its regular timestep."""
 
     if not isinstance(df.index, pd.DatetimeIndex):
         raise TypeError(f"{name}: index must be a DatetimeIndex")
     if df.index.tz is not None:
         raise ValueError(f"{name}: index must be timezone-naive")
+    frequency = infer_sampling_frequency(df.index, name)
+    expected_index = expected_hourly_index(year_to_check, frequency)
     if len(df) != len(expected_index):
         raise ValueError(
             f"{name}: expected {len(expected_index)} rows, got {len(df)}"
@@ -179,7 +210,8 @@ def validate_df(
         missing = expected_index.difference(df.index)
         extra = df.index.difference(expected_index)
         raise ValueError(
-            f"{name}: index does not exactly match hourly {year_to_check}. "
+            f"{name}: index does not exactly match complete {year_to_check} "
+            f"at frequency {frequency}. "
             f"Missing examples: {missing[:5].tolist()}. "
             f"Extra examples: {extra[:5].tolist()}."
         )
@@ -191,6 +223,7 @@ def validate_df(
         raise TypeError(
             f"{name}: non-numeric columns found: {non_numeric_cols}"
         )
+    return frequency
 
 
 def validate_unit_interval(df: pd.DataFrame, name: str) -> None:

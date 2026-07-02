@@ -17,6 +17,7 @@ from tsam_workflows.grouped import (
     build_hourly_metadata,
     build_representative_days,
     collect_representative_day_data,
+    run_aggregation_all_groups,
     run_grouped_workflow,
     sort_group_id,
     validate_group_feasibility,
@@ -41,6 +42,12 @@ def test_collect_representative_days_ignores_non_representative_weight_entries()
         clustering=SimpleNamespace(cluster_centers=(0, 2)),
         cluster_weights={0: 2, 1: 999, 2: 1},
         period_index=[0, 2],
+        cluster_representatives=pd.DataFrame(
+            index=pd.MultiIndex.from_product(
+                [[0, 2], range(24)],
+                names=["cluster", "timestep"],
+            )
+        ),
     )
 
     representatives, day_assignments = collect_representative_day_data(
@@ -53,6 +60,42 @@ def test_collect_representative_days_ignores_non_representative_weight_entries()
     assert set(day_assignments["cluster_id"]) == {0, 2}
 
 
+def test_collect_representative_days_exports_tsam_representative_values() -> None:
+    index = pd.date_range("2025-01-02", periods=24, freq="h")
+    group_data = pd.DataFrame(
+        {
+            "DE_demand_2025": range(24),
+            "group_day_number": 1,
+            "group_id": "2025_1_working",
+            "date": index.normalize(),
+            "month": 1,
+            "day_type": "working",
+        },
+        index=index,
+    )
+    representatives = pd.DataFrame(
+        {"DE_demand_2025": [100.0 + step for step in range(24)]},
+        index=pd.MultiIndex.from_product(
+            [[0], range(24)], names=["cluster", "timestep"]
+        ),
+    )
+    result = SimpleNamespace(
+        assignments=pd.DataFrame({"cluster_idx": 0}, index=index),
+        clustering=SimpleNamespace(cluster_centers=(0,)),
+        cluster_weights={0: 1},
+        period_index=[0],
+        cluster_representatives=representatives,
+    )
+
+    reduced, _ = collect_representative_day_data(result, group_data)
+
+    assert reduced["DE_demand_2025"].tolist() == representatives[
+        "DE_demand_2025"
+    ].tolist()
+    assert reduced["date"].nunique() == 1
+    assert reduced["date"].iloc[0] == pd.Timestamp("2025-01-02")
+
+
 def test_build_hourly_metadata_assigns_month_day_type_and_group() -> None:
     index = pd.date_range("2025-01-03", periods=48, freq="h")
     features = pd.DataFrame({"DE_demand_2025": range(48)}, index=index)
@@ -62,6 +105,67 @@ def test_build_hourly_metadata_assigns_month_day_type_and_group() -> None:
     assert metadata.loc["2025-01-03 00:00", "day_type"] == "working"
     assert metadata.loc["2025-01-04 00:00", "day_type"] == "non-working"
     assert metadata.loc["2025-01-04 00:00", "group_id"] == "2025_1_non-working"
+
+
+def test_grouped_aggregation_keeps_one_day_period_for_half_hour_data(
+    tmp_path: Path,
+) -> None:
+    index = pd.date_range("2025-01-02", periods=96, freq="30min")
+    metadata = build_hourly_metadata(
+        pd.DataFrame({"DE_demand_2025": range(96)}, index=index),
+        {"Saturday", "Sunday"},
+    )
+    config = GroupedWorkflowConfig(
+        year=2025,
+        data_dir=tmp_path,
+        output_dir=tmp_path / "out",
+        working_clusters=1,
+        non_working_clusters=1,
+    )
+
+    reduced, _, results = run_aggregation_all_groups(
+        ["2025_1_working"],
+        metadata,
+        ["DE_demand_2025"],
+        config,
+    )
+
+    assert results["2025_1_working"].n_timesteps_per_period == 48
+    assert len(reduced) == 48
+
+
+def test_grouped_aggregation_exports_mean_preserved_profiles(tmp_path: Path) -> None:
+    index = pd.date_range("2025-01-02", periods=48, freq="h")
+    metadata = build_hourly_metadata(
+        pd.DataFrame(
+            {
+                "DE_demand_2025": [float(value) for value in range(1, 25)]
+                + [float(value) for value in range(2, 50, 2)]
+            },
+            index=index,
+        ),
+        {"Saturday", "Sunday"},
+    )
+    config = GroupedWorkflowConfig(
+        year=2025,
+        data_dir=tmp_path,
+        output_dir=tmp_path / "out",
+        working_clusters=1,
+        non_working_clusters=1,
+        preserve_column_means=True,
+    )
+
+    reduced, _, _ = run_aggregation_all_groups(
+        ["2025_1_working"],
+        metadata,
+        ["DE_demand_2025"],
+        config,
+    )
+
+    assert reduced["DE_demand_2025"].mean() == pytest.approx(18.75)
+    assert reduced["DE_demand_2025"].tolist() != [
+        float(value) for value in range(1, 25)
+    ]
 
 
 def test_sort_group_id_uses_calendar_order() -> None:
@@ -121,6 +225,8 @@ def test_run_grouped_workflow_preserves_output_shapes_and_schemas(
     assert len(result.day_assignments_df) == 365
     assert len(result.representative_days) == 24
     assert len(result.reduced_hourly_df) == 24 * 24
+    assert result.sampling_frequency == pd.Timedelta(hours=1)
+    assert result.period_timesteps == 24
     assert list(result.representative_days.columns) == [
         "selected_medoid_date",
         "representative_id",

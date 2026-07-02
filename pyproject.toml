@@ -16,6 +16,7 @@ dependencies = [
     "notebook>=7.0.0",
     "pandas>=3.0.1",
     "plotly>=6.7.0",
+    "pyyaml>=6.0.3",
     "tsam>=3.3.0",
 ]
 

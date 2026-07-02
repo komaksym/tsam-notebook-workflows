@@ -7,6 +7,7 @@ import json
 import shutil
 import sys
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -14,9 +15,12 @@ import pandas as pd
 
 from tsam_workflows.charts import ChartExportError, export_charts
 from tsam_workflows.config import (
+    GroupedConfigFile,
     GroupedWorkflowConfig,
+    DatasetSpec,
     SUPPORTED_CLUSTER_METHODS,
     default_dataset_specs,
+    load_grouped_config_file,
 )
 from tsam_workflows.data import normalize_country_args
 from tsam_workflows.grouped import GroupedWorkflowResult, run_grouped_workflow
@@ -27,34 +31,93 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tsam-workflows")
     subparsers = parser.add_subparsers(dest="command", required=True)
     grouped = subparsers.add_parser("grouped", help="Run grouped TSAM workflow")
-    grouped.add_argument("--data-dir", type=Path, default=Path("data"))
+    grouped.add_argument(
+        "--config",
+        type=Path,
+        help="Optional YAML workflow configuration",
+    )
+    grouped.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Built-in dataset directory (cannot be combined with --config)",
+    )
     grouped.add_argument("--output-dir", type=Path, required=True)
-    grouped.add_argument("--year", type=int, default=2025)
-    grouped.add_argument("--countries", nargs="+", default=("all",))
-    grouped.add_argument("--working-clusters", type=int, default=5)
-    grouped.add_argument("--non-working-clusters", type=int, default=2)
+    grouped.add_argument("--year", type=int, help="Override configured year")
+    grouped.add_argument(
+        "--countries",
+        nargs="+",
+        help="Override configured countries with ALL or country codes",
+    )
+    grouped.add_argument(
+        "--working-clusters",
+        type=int,
+        help="Override configured working-day cluster count",
+    )
+    grouped.add_argument(
+        "--non-working-clusters",
+        type=int,
+        help="Override configured non-working-day cluster count",
+    )
     grouped.add_argument(
         "--cluster-method",
         choices=SUPPORTED_CLUSTER_METHODS,
-        default="hierarchical",
     )
     grouped.add_argument("--overwrite", action="store_true")
     return parser
 
 
-def config_from_args(args: argparse.Namespace) -> GroupedWorkflowConfig:
-    """Convert parsed grouped-command arguments into workflow configuration."""
-    countries = normalize_country_args(args.countries)
-    return GroupedWorkflowConfig(
-        year=args.year,
-        data_dir=args.data_dir,
+def resolve_grouped_inputs(
+    args: argparse.Namespace,
+) -> tuple[GroupedWorkflowConfig, dict[str, DatasetSpec]]:
+    """Resolve grouped workflow settings from defaults, YAML, and CLI overrides."""
+    if args.config is not None:
+        if args.data_dir is not None:
+            raise ValueError("--data-dir cannot be used with --config")
+        config_path = args.config.resolve()
+        loaded = load_grouped_config_file(config_path)
+        data_dir = config_path.parent
+    else:
+        data_dir = args.data_dir if args.data_dir is not None else Path("data")
+        loaded = GroupedConfigFile(dataset_specs=default_dataset_specs(data_dir))
+
+    countries = (
+        normalize_country_args(args.countries)
+        if args.countries is not None
+        else loaded.countries
+    )
+    config = GroupedWorkflowConfig(
+        year=args.year if args.year is not None else loaded.year,
+        data_dir=data_dir,
         output_dir=args.output_dir,
         countries=countries,
-        working_clusters=args.working_clusters,
-        non_working_clusters=args.non_working_clusters,
-        cluster_method=args.cluster_method,
+        working_clusters=(
+            args.working_clusters
+            if args.working_clusters is not None
+            else loaded.working_clusters
+        ),
+        non_working_clusters=(
+            args.non_working_clusters
+            if args.non_working_clusters is not None
+            else loaded.non_working_clusters
+        ),
+        cluster_method=(
+            args.cluster_method
+            if args.cluster_method is not None
+            else loaded.cluster_method
+        ),
         overwrite=args.overwrite,
+        snapshot_column=loaded.snapshot_column,
+        timestamp_format=loaded.timestamp_format,
+        preserve_column_means=loaded.preserve_column_means,
+        non_working_weekdays=loaded.non_working_weekdays,
     )
+    return config, loaded.dataset_specs
+
+
+def config_from_args(args: argparse.Namespace) -> GroupedWorkflowConfig:
+    """Return only runtime config for callers that do not need dataset specs."""
+    config, _ = resolve_grouped_inputs(args)
+    return config
 
 
 def _is_non_empty_dir(path: Path) -> bool:
@@ -95,11 +158,12 @@ def _json_records(df: pd.DataFrame) -> list[dict[str, Any]]:
 def _write_manifest(
     config: GroupedWorkflowConfig,
     result: Any,
+    specs: Mapping[str, DatasetSpec],
     output_dir: Path,
     artifacts: list[Path],
     skipped: list[dict[str, str]],
 ) -> Path:
-    """Write the run manifest with config, coverage, artifacts, and skips."""
+    """Write reproducibility metadata for the published grouped workflow run."""
     artifact_names = {
         str(path.relative_to(output_dir)) for path in artifacts if path.exists()
     }
@@ -113,6 +177,21 @@ def _write_manifest(
             "non_working_clusters": config.non_working_clusters,
             "cluster_method": config.cluster_method,
             "preserve_column_means": config.preserve_column_means,
+            "sampling_frequency": str(result.sampling_frequency),
+            "period_timesteps": result.period_timesteps,
+            "snapshot_column": config.snapshot_column,
+            "timestamp_format": config.timestamp_format,
+            "non_working_weekdays": sorted(config.non_working_weekdays),
+        },
+        "datasets": {
+            name: {
+                "path": str(spec.path),
+                "separator": spec.separator,
+                "feature": spec.feature,
+                "feature_group": spec.feature_group,
+                "unit_interval": spec.unit_interval,
+            }
+            for name, spec in sorted(specs.items())
         },
         "dataset_coverage": _json_records(result.dataset_coverage),
         "selected_countries": list(getattr(result, "selected_countries", ())),
@@ -176,7 +255,7 @@ def _merge_staging_directory(staging_dir: Path, output_dir: Path) -> None:
 
 def run_grouped_command(args: argparse.Namespace) -> int:
     """Run the grouped workflow CLI command and publish staged artifacts."""
-    config = config_from_args(args)
+    config, specs = resolve_grouped_inputs(args)
     _ensure_output_available(config.output_dir, config.overwrite)
     config.output_dir.parent.mkdir(parents=True, exist_ok=True)
     staging_dir = Path(
@@ -188,7 +267,6 @@ def run_grouped_command(args: argparse.Namespace) -> int:
     published = False
     try:
         print("[1/4] Loading data and clustering...", file=sys.stderr, flush=True)
-        specs = default_dataset_specs(config.data_dir)
         result = run_grouped_workflow(config, specs)
         print("[2/4] Writing CSV artifacts...", file=sys.stderr, flush=True)
         artifacts = _save_tables(result, staging_dir)
@@ -200,6 +278,7 @@ def run_grouped_command(args: argparse.Namespace) -> int:
         manifest = _write_manifest(
             config,
             result,
+            specs,
             staging_dir,
             artifacts,
             chart_result.skipped,
