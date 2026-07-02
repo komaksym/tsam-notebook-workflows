@@ -220,6 +220,60 @@ def test_approach_notebook_uses_original_chart_defaults() -> None:
     assert "COUNTRY_OPTIONS = country_options(" in all_code
 
 
+def test_approach_notebook_documents_unsupported_tsam_customization_methods() -> None:
+    notebook_path = Path(__file__).parents[1] / "src" / "approach_1_ALL.ipynb"
+    notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+    markdown_by_heading = {
+        cell["source"][0].strip(): "".join(cell["source"])
+        for cell in notebook["cells"]
+        if cell["cell_type"] == "markdown" and cell["source"]
+    }
+
+    normalization = markdown_by_heading["# Normalization"]
+    for detail in (
+        "per-column min-max scaling",
+        "normalize_column_means=True",
+        "weights=",
+        "1 / sqrt(group_column_count)",
+        "Physical-scale normalization",
+        "not supported by the grouped workflow or CLI",
+    ):
+        assert detail in normalization
+
+    preservation = markdown_by_heading["# Feature Preservation"]
+    for detail in (
+        'representation="medoid"',
+        "preserve_column_means=True",
+        "ExtremeConfig",
+        "tsam.Distribution",
+        "not supported by the grouped workflow or CLI",
+    ):
+        assert detail in preservation
+
+
+def test_approach_notebook_has_linked_table_of_contents_after_title() -> None:
+    notebook_path = Path(__file__).parents[1] / "src" / "approach_1_ALL.ipynb"
+    notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+
+    toc = "".join(notebook["cells"][1]["source"])
+    assert toc == (
+        "## Table of Contents\n"
+        "\n"
+        "- [Method Overview](#Method-Overview)\n"
+        "- [Normalization](#Normalization)\n"
+        "- [Feature Preservation](#Feature-Preservation)\n"
+        "  - [Preservation Objectives](#Preservation-Objectives)\n"
+        "  - [Clustering Influence](#Clustering-Influence)\n"
+        "  - [Current Baseline](#Current-Baseline)\n"
+        "- [Imports And Configuration](#Imports-And-Configuration)\n"
+        "- [Run Workflow](#Run-Workflow)\n"
+        "- [Output Tables](#Output-Tables)\n"
+        "- [Summary Charts](#Summary-Charts)\n"
+        "- [Group-Level TSAM Diagnostic Drilldowns](#Group-Level-TSAM-Diagnostic-Drilldowns)\n"
+        "- [Optional CSV Export](#Optional-CSV-Export)\n"
+    )
+
+
 def test_country_options_restore_original_notebook_labels() -> None:
     assert config.country_options(["FR", "DE"]) == [
         ("Germany (DE)", "DE"),
