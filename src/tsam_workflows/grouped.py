@@ -198,7 +198,7 @@ def collect_representative_day_data(
         + day_assignments["cluster_id"].astype(str)
     )
 
-    cluster_ids = sorted(cluster_weights_by_id)
+    cluster_ids = aggregation_result.period_index
     for cluster_id, representative_day_index in zip(
         cluster_ids,
         representative_day_indices,

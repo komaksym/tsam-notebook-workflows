@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -15,10 +16,41 @@ from tsam_workflows.config import (
 from tsam_workflows.grouped import (
     build_hourly_metadata,
     build_representative_days,
+    collect_representative_day_data,
     run_grouped_workflow,
     sort_group_id,
     validate_group_feasibility,
 )
+
+
+def test_collect_representative_days_ignores_non_representative_weight_entries() -> None:
+    index = pd.date_range("2025-01-01", periods=72, freq="h")
+    group_data = pd.DataFrame(
+        {
+            "group_day_number": index.day,
+            "group_id": "2025_1_working",
+        },
+        index=index,
+    )
+    assignments = pd.DataFrame(
+        {"cluster_idx": [0] * 48 + [2] * 24},
+        index=index,
+    )
+    result = SimpleNamespace(
+        assignments=assignments,
+        clustering=SimpleNamespace(cluster_centers=(0, 2)),
+        cluster_weights={0: 2, 1: 999, 2: 1},
+        period_index=[0, 2],
+    )
+
+    representatives, day_assignments = collect_representative_day_data(
+        result,
+        group_data,
+    )
+
+    assert set(representatives["cluster_id"]) == {0, 2}
+    assert set(representatives["cluster_weight"]) == {1, 2}
+    assert set(day_assignments["cluster_id"]) == {0, 2}
 
 
 def test_build_hourly_metadata_assigns_month_day_type_and_group() -> None:
@@ -117,4 +149,3 @@ def test_build_representative_days_schema() -> None:
 
     assert representative_days.loc[0, "selected_medoid_date"] == pd.Timestamp("2025-01-01")
     assert len(representative_days) == 1
-
