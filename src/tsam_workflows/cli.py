@@ -187,12 +187,16 @@ def run_grouped_command(args: argparse.Namespace) -> int:
     )
     published = False
     try:
+        print("[1/4] Loading data and clustering...", file=sys.stderr, flush=True)
         specs = default_dataset_specs(config.data_dir)
         result = run_grouped_workflow(config, specs)
+        print("[2/4] Writing CSV artifacts...", file=sys.stderr, flush=True)
         artifacts = _save_tables(result, staging_dir)
+        print("[3/4] Generating interactive charts...", file=sys.stderr, flush=True)
         charts_dir = staging_dir / "charts"
         chart_result = export_charts(result, charts_dir)
         artifacts.extend(chart_result.files)
+        print("[4/4] Publishing output...", file=sys.stderr, flush=True)
         manifest = _write_manifest(
             config,
             result,
@@ -203,6 +207,12 @@ def run_grouped_command(args: argparse.Namespace) -> int:
         artifacts.append(manifest)
         _publish_staging(staging_dir, config.output_dir, config.overwrite)
         published = True
+        print(file=sys.stderr, flush=True)
+        output_dir = config.output_dir.resolve()
+        dashboard = (output_dir / "charts" / "index.html").as_uri()
+        print("Grouped workflow completed successfully.")
+        print(f"Open the chart dashboard: {dashboard}")
+        print(f"Artifacts written to: {output_dir}")
         return 0
     finally:
         if not published and staging_dir.exists():
