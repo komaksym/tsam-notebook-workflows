@@ -565,20 +565,186 @@ def _write_group_diagnostics(result: Any, output_dir: Path) -> Path:
 
 
 def _write_index(output_dir: Path, files: list[Path]) -> Path:
-    """Write a minimal local navigation page for exported chart HTML files."""
-    links = []
-    for path in sorted(files, key=lambda item: item.name):
-        if path.name == "index.html":
-            continue
-        label = html.escape(path.stem.replace("_", " ").title())
-        links.append(f'<li><a href="{html.escape(path.name)}">{label}</a></li>')
+    """Write a responsive offline shell around the exported chart files."""
+    navigation = (
+        (
+            "Overview",
+            (
+                (
+                    "assignment_calendar.html",
+                    "Assignment calendar",
+                    "See how every original day maps to a representative day.",
+                ),
+                (
+                    "representative_weights.html",
+                    "Representative weights",
+                    "Compare representative shares across months and day types.",
+                ),
+                (
+                    "group_accuracy.html",
+                    "Group accuracy",
+                    "Review weighted reconstruction error for every workflow group.",
+                ),
+            ),
+        ),
+        (
+            "Explore",
+            (
+                (
+                    "group_diagnostics.html",
+                    "Group diagnostics",
+                    "Switch groups to inspect cluster weights and accuracy metrics.",
+                ),
+                (
+                    "drilldown_dashboard.html",
+                    "Feature drilldowns",
+                    "Explore representatives, members, comparisons, and residuals.",
+                ),
+            ),
+        ),
+    )
+    href_by_name = {
+        path.name: path.relative_to(output_dir).as_posix()
+        for path in files
+    }
+    available = set(href_by_name)
+    entries = [
+        entry
+        for _, group_entries in navigation
+        for entry in group_entries
+        if entry[0] in available
+    ]
+    if not entries:
+        raise ChartExportError("No chart files are available for the chart index")
+
+    default_filename, default_title, default_description = entries[0]
+    default_href = href_by_name[default_filename]
+    sections = []
+    for section_title, group_entries in navigation:
+        links = []
+        for filename, title, description in group_entries:
+            if filename not in available:
+                continue
+            href = href_by_name[filename]
+            active_attributes = (
+                ' class="nav-link is-active" aria-current="page"'
+                if filename == default_filename
+                else ' class="nav-link"'
+            )
+            links.append(
+                f'<a{active_attributes} href="{html.escape(href)}" '
+                'target="chart-frame" '
+                f'data-title="{html.escape(title, quote=True)}" '
+                f'data-description="{html.escape(description, quote=True)}">'
+                f'<span class="nav-title">{html.escape(title)}</span>'
+                f'<span class="nav-description">{html.escape(description)}</span>'
+                "</a>"
+            )
+        if links:
+            sections.append(
+                '<section class="nav-section">'
+                f"<h2>{html.escape(section_title)}</h2>"
+                + "".join(links)
+                + "</section>"
+            )
+
+    styles = """
+    :root{color-scheme:light;--ink:#2a3f5f;--muted:#667085;--line:#d9deea;
+      --panel:#f7f8fc;--accent:#636efa;--accent-soft:#e9ebff;}
+    *{box-sizing:border-box;}html,body{height:100%;}
+    body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",
+      sans-serif;color:var(--ink);background:#eef1f7;}
+    .app-shell{display:grid;grid-template-columns:300px minmax(0,1fr);height:100vh;}
+    .sidebar{overflow:auto;background:var(--panel);border-right:1px solid var(--line);
+      padding:28px 20px;}
+    .brand{padding:0 8px 22px;border-bottom:1px solid var(--line);}
+    .eyebrow{margin:0 0 6px;color:var(--accent);font-size:12px;font-weight:750;
+      letter-spacing:.1em;text-transform:uppercase;}
+    .brand h1{margin:0;font-size:24px;line-height:1.2;}
+    .brand p{margin:9px 0 0;color:var(--muted);font-size:14px;line-height:1.45;}
+    #chart-navigation{padding-top:18px;}
+    .nav-section+.nav-section{margin-top:24px;}
+    .nav-section h2{margin:0 8px 8px;color:var(--muted);font-size:12px;
+      letter-spacing:.08em;text-transform:uppercase;}
+    .nav-link{display:block;margin:4px 0;padding:11px 12px;border:1px solid transparent;
+      border-radius:10px;color:var(--ink);text-decoration:none;transition:120ms ease;}
+    .nav-link:hover,.nav-link:focus-visible{background:#fff;border-color:var(--line);
+      outline:none;box-shadow:0 3px 10px rgba(42,63,95,.08);}
+    .nav-link[aria-current="page"]{background:var(--accent-soft);border-color:#cbd0ff;
+      box-shadow:inset 3px 0 0 var(--accent);}
+    .nav-title{display:block;font-size:14px;font-weight:700;}
+    .nav-description{display:block;margin-top:4px;color:var(--muted);font-size:12px;
+      line-height:1.4;}
+    .workspace{display:grid;grid-template-rows:auto minmax(0,1fr);min-width:0;}
+    .toolbar{display:flex;align-items:center;justify-content:space-between;gap:24px;
+      min-height:108px;padding:20px 28px;background:#fff;border-bottom:1px solid var(--line);}
+    .toolbar h2{margin:0;font-size:22px;}.toolbar p{margin:5px 0 0;color:var(--muted);}
+    .open-chart{flex:0 0 auto;padding:9px 14px;border:1px solid var(--line);
+      border-radius:9px;color:var(--ink);background:#fff;font-size:14px;font-weight:650;
+      text-decoration:none;}
+    .open-chart:hover,.open-chart:focus-visible{border-color:var(--accent);color:var(--accent);
+      outline:none;}
+    .frame-wrap{min-height:0;padding:16px;}
+    #chart-frame{display:block;width:100%;height:100%;min-height:640px;border:1px solid var(--line);
+      border-radius:14px;background:#fff;box-shadow:0 12px 32px rgba(42,63,95,.1);}
+    @media(max-width:820px){
+      .app-shell{grid-template-columns:1fr;grid-template-rows:auto minmax(760px,1fr);
+        height:auto;min-height:100%;}.sidebar{overflow:visible;border-right:0;
+        border-bottom:1px solid var(--line);padding:20px;}
+      #chart-navigation{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;}
+      .nav-section+.nav-section{margin-top:0}.workspace{min-height:760px;}
+    }
+    @media(max-width:560px){#chart-navigation{grid-template-columns:1fr;}
+      .toolbar{align-items:flex-start;flex-direction:column;padding:18px 20px;gap:12px;}
+      .frame-wrap{padding:8px;}#chart-frame{min-height:620px;border-radius:10px;}}
+    """
+    script = """
+    const links=Array.from(document.querySelectorAll('.nav-link'));
+    const frame=document.getElementById('chart-frame');
+    const title=document.getElementById('chart-title');
+    const description=document.getElementById('chart-description');
+    const openChart=document.getElementById('open-chart');
+    function selectChart(link,updateHash=true){
+      const href=link.getAttribute('href');
+      links.forEach(item=>{item.classList.remove('is-active');item.removeAttribute('aria-current');});
+      link.classList.add('is-active');link.setAttribute('aria-current','page');
+      if(frame.getAttribute('src')!==href){frame.setAttribute('src',href);}
+      frame.setAttribute('title',link.dataset.title);
+      title.textContent=link.dataset.title;description.textContent=link.dataset.description;
+      openChart.setAttribute('href',href);
+      if(updateHash){
+        const hash=`#${encodeURIComponent(href)}`;
+        try{history.replaceState(null,'',hash);}catch(error){location.hash=hash;}
+      }
+    }
+    links.forEach(link=>link.addEventListener('click',event=>{
+      event.preventDefault();selectChart(link);
+    }));
+    const requested=decodeURIComponent(location.hash.slice(1));
+    const initial=links.find(link=>link.getAttribute('href')===requested)||links[0];
+    if(initial){selectChart(initial,false);}
+    """
     index = output_dir / "index.html"
     index.write_text(
-        "<!doctype html><html><head><meta charset='utf-8'>"
-        "<title>TSAM workflow charts</title></head><body>"
-        "<h1>TSAM workflow charts</h1><ul>"
-        + "\n".join(links)
-        + "</ul></body></html>",
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f"<title>TSAM workflow charts</title><style>{styles}</style></head><body>"
+        '<div class="app-shell"><aside class="sidebar">'
+        '<header class="brand"><p class="eyebrow">Offline report</p>'
+        '<h1>TSAM charts</h1><p>Review workflow summaries and explore detailed '
+        "cluster diagnostics.</p></header>"
+        '<nav id="chart-navigation" aria-label="Chart navigation">'
+        + "".join(sections)
+        + '</nav></aside><main class="workspace"><header class="toolbar">'
+        '<div><p class="eyebrow">Now viewing</p>'
+        f'<h2 id="chart-title">{html.escape(default_title)}</h2>'
+        f'<p id="chart-description">{html.escape(default_description)}</p></div>'
+        f'<a id="open-chart" class="open-chart" href="{default_href}" '
+        'target="_blank" rel="noopener">Open separately</a></header>'
+        '<div class="frame-wrap">'
+        f'<iframe id="chart-frame" name="chart-frame" src="{default_href}" '
+        f'title="{html.escape(default_title, quote=True)}"></iframe>'
+        f"</div></main></div><script>{script}</script></body></html>",
         encoding="utf-8",
     )
     return index
